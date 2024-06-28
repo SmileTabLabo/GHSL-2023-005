@@ -1,0 +1,27 @@
+name: Compile
+
+on:
+  push:
+    paths:
+      - '*.c'
+      - '*.h'
+      - '.github/workflows/compile.yml'
+  workflow_dispatch:
+
+jobs:
+  compile:
+    name: Compile
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile
+        run: $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang -DSHELL mali_jit.c -o mali_jit
+
+      - name: Uplaod
+        uses: actions/upload-artifact@v4
+        with:
+          name: GHSL-2023-005
+          path: mali_jit

